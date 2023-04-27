@@ -1,0 +1,73 @@
+import alpaca_trade_api as tradeapi
+import talib
+import pandas as pd
+
+# Connect to Alpaca API
+api = tradeapi.REST('<api_key_id>', '<api_secret_key>', base_url='https://paper-api.alpaca.markets')
+
+# Define variables
+symbol = 'AAPL'
+timeframe = '1D'
+adx_period = 14
+ema_period = 20
+stop_loss = 1
+profit_target = 3
+
+# Define functions
+def get_historical_data(symbol, timeframe):
+    # Get historical data from Alpaca API
+    bars = api.get_barset(symbol, timeframe, limit=1000).df[symbol]
+    # Resample data to timeframe
+    bars = bars.resample(timeframe).agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'})
+    # Drop rows with missing data
+    bars = bars.dropna()
+    return bars
+
+def calculate_indicators(bars, adx_period, ema_period):
+    # Calculate ADX
+    bars['ADX'] = talib.ADX(bars['high'], bars['low'], bars['close'], timeperiod=adx_period)
+    # Calculate EMA 20
+    bars['EMA20'] = talib.EMA(bars['close'], timeperiod=ema_period)
+    # Calculate breakout and retest
+    bars['Breakout'] = bars['high'].shift(1) < bars['high']
+    bars['Retest'] = bars['low'].shift(1) > bars['low']
+    return bars
+
+def enter_trade(bars):
+    if bars['ADX'].iloc[-1] > 23 and bars['Breakout'].iloc[-1] and bars['Retest'].iloc[-1]:
+        # Enter long position
+        order = api.submit_order(
+            symbol=symbol,
+            qty=1,
+            side='buy',
+            type='market',
+            time_in_force='gtc'
+        )
+        # Set stop loss and profit target
+        api.submit_order(
+            symbol=symbol,
+            qty=1,
+            side='sell',
+            type='stop',
+            time_in_force='gtc',
+            stop_price=bars['EMA20'].iloc[-1] - stop_loss,
+            order_class='oco',
+            take_profit=dict(
+                limit_price=bars['EMA20'].iloc[-1] + profit_target * stop_loss
+            ),
+            stop_loss=dict(
+                stop_price=bars['EMA20'].iloc[-1] - stop_loss
+            )
+        )
+
+# Main function
+def run_bot():
+    # Get historical data
+    bars = get_historical_data(symbol, timeframe)
+    # Calculate indicators
+    bars = calculate_indicators(bars, adx_period, ema_period)
+    # Enter trade
+    enter_trade(bars)
+
+# Run the bot
+run_bot()
